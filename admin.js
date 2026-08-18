@@ -272,9 +272,17 @@ $('#side-toggle').addEventListener('click', () => {
 });
 
 // ==== SECTION: SHARED DATA ====
+// FIX: orderBy('order') silently drops any doc missing the 'order' field
+// (e.g. categories created before the field existed). Fetch ALL docs and
+// sort client-side so nothing ever disappears from the admin panel.
 const loadCategories = async () => {
-  const snap = await db.collection('categories').orderBy('order').get();
-  S.categories = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  let snap;
+  try { snap = await db.collection('categories').orderBy('order').get(); }
+  catch (e) { snap = await db.collection('categories').get(); }
+  S.categories = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+    // Backfill missing sort keys in memory so legacy docs are never hidden.
+    .map(c => ({ ...c, order: (typeof c.order === 'number' ? c.order : 9999), isActive: c.isActive !== false }))
+    .sort((a, b) => (a.order - b.order) || String(a.name || '').localeCompare(String(b.name || '')));
   const opts = ['#tpl-cat-filter', '#ord-cat', '#form-scope'];
   opts.forEach(sel => {
     const node = $(sel);
@@ -419,8 +427,12 @@ const Templates = (() => {
   let templates = [];
 
   const load = async () => {
-    const snap = await db.collection('templates').orderBy('name').get();
-    templates = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // FIX: orderBy('name') silently drops any template missing 'name'. Fetch ALL
+    // docs and sort client-side so every admin-created template is always visible.
+    const snap = await db.collection('templates').get();
+    templates = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .map(t => ({ ...t, isActive: t.isActive !== false }))
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
     render();
   };
 
@@ -833,8 +845,13 @@ const Orders = (() => {
   };
 
   const load = async () => {
-    const snap = await db.collection('orders').orderBy('updatedAt', 'desc').limit(200).get();
-    orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    // FIX: orderBy('updatedAt') drops orders missing that field. Try ordered,
+    // fall back to unordered, then always sort client-side so none vanish.
+    let snap;
+    try { snap = await db.collection('orders').orderBy('updatedAt', 'desc').limit(500).get(); }
+    catch (e) { snap = await db.collection('orders').limit(500).get(); }
+    orders = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.updatedAt?.toMillis?.() || b.createdAt?.toMillis?.() || 0) - (a.updatedAt?.toMillis?.() || a.createdAt?.toMillis?.() || 0));
     render();
   };
 
