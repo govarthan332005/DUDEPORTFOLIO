@@ -199,8 +199,10 @@ const Data = (() => {
       }
       State.categories = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
+        // Treat a MISSING isActive as active (legacy docs), only exclude explicit false.
         .filter(c => c.isActive !== false)
-        .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        .map(c => ({ ...c, order: (typeof c.order === 'number' ? c.order : 9999) }))
+        .sort((a, b) => (a.order - b.order) || String(a.name || '').localeCompare(String(b.name || '')));
     } catch (e) {
       console.error('Categories load failed:', e);
       State.categories = [];
@@ -222,39 +224,28 @@ const Data = (() => {
     return q.limit(State.pageSize);
   };
 
+  // FIX: the security rule `resource.data.isActive == true` and the client filter
+  // both excluded docs where isActive is MISSING. We fetch by category (a filter
+  // that never depends on isActive) and treat a missing isActive as ACTIVE so
+  // admin-created templates are always visible. Sorting is done client-side so no
+  // composite index is ever required on a fresh project.
   const loadTemplatesPage = async (categoryId, sort, cursor) => {
     if (!categoryId) return { items: [], cursor: null, end: true };
     try {
-      let q = buildTemplatesQuery(categoryId, sort);
-      if (cursor) q = q.startAfter(cursor);
-      const snap = await q.get();
-      let items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      // Client-side featured boost (avoids composite index requirement).
-      if (sort === 'featured') {
-        items = items.slice().sort((a, b) => (b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0));
-      }
-      return {
-        items,
-        cursor: snap.docs[snap.docs.length - 1] || null,
-        end: snap.docs.length < State.pageSize
-      };
+      const snap = await db.collection('templates')
+        .where('categoryId', '==', categoryId)
+        .limit(100).get();
+      let items = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        // Missing isActive counts as active (matches rule intent: only exclude explicit false).
+        .filter(t => t.isActive !== false);
+      if (sort === 'price_asc') items.sort((a, b) => (a.price || 0) - (b.price || 0));
+      else if (sort === 'price_desc') items.sort((a, b) => (b.price || 0) - (a.price || 0));
+      else if (sort === 'rating_desc') items.sort((a, b) => (b.rating?.average || 0) - (a.rating?.average || 0));
+      else items.sort((a, b) => ((b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0)) || String(a.name || '').localeCompare(String(b.name || '')));
+      return { items: items.slice(0, State.pageSize), cursor: null, end: true };
     } catch (e) {
-      // Final fallback: fetch by category only, sort in memory.
-      console.warn('Template query failed, falling back to unsorted:', e);
-      try {
-        const snap = await db.collection('templates')
-          .where('isActive', '==', true)
-          .where('categoryId', '==', categoryId)
-          .limit(50).get();
-        let items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        if (sort === 'price_asc') items.sort((a, b) => (a.price || 0) - (b.price || 0));
-        else if (sort === 'price_desc') items.sort((a, b) => (b.price || 0) - (a.price || 0));
-        else if (sort === 'rating_desc') items.sort((a, b) => (b.rating?.average || 0) - (a.rating?.average || 0));
-        else items.sort((a, b) => ((b.isFeatured ? 1 : 0) - (a.isFeatured ? 1 : 0)) || String(a.name || '').localeCompare(String(b.name || '')));
-        return { items: items.slice(0, State.pageSize), cursor: null, end: true };
-      } catch (err2) {
-        throw err2;
-      }
+      console.error('Template load failed:', e);
+      throw e;
     }
   };
 
