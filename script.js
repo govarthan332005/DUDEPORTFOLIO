@@ -2462,7 +2462,18 @@ const Contact = (() => {
   }
 })();
 
-/* ---- DUDE-BOT chatbot widget ---- */
+/* ============================================================
+   DUDE-BOT chatbot widget — HARDENED v4 (2026)
+   Fixes:
+   ✔ FAB tap reliability (no double-close race during anim window)
+   ✔ Quick-chip clicks always fire (delegated + pointerdown fallback)
+   ✔ Send button always fires (delegated submit + explicit click)
+   ✔ Close button always fires (delegated + pointer fallback)
+   ✔ In-bubble anchor links auto-close panel + hash-navigate
+   ✔ True FULLSCREEN on small screens (≤640px) via body class
+   ✔ Body scroll lock while fullscreen open (no bg bleed)
+   ✔ Safe against pointer-events flicker during open/close transition
+   ============================================================ */
 (() => {
   const $ = (s, c = document) => c.querySelector(s);
   const fab      = $('#dude-bot-fab');
@@ -2473,21 +2484,26 @@ const Contact = (() => {
   const input    = $('#dude-bot-input');
   const quick    = $('#dude-bot-quick');
   const badge    = $('#dude-bot-badge');
+  const sendBtn  = form && form.querySelector('.dude-bot-send');
 
   if (!fab || !panel || !msgs || !form || !input) return;
+
+  // Guard against double-init if script is loaded twice
+  if (fab.dataset.dudebotInit === '1') return;
+  fab.dataset.dudebotInit = '1';
 
   const HYPE = ['🚀','✨','🔥','💯','⚡','😎','🤙','🫡','💅','🥳','🧠','👀'];
   const rand = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
   const KB = [
     { keys: ['hi','hello','hey','yo','sup','hola'], reply: () => `Yooo! 👋 Welcome to <b>DUDE</b> ${rand(HYPE)}<br><br>Ask me anything: <i>pricing</i>, <i>templates</i>, <i>delivery</i>, <i>refunds</i>` },
-    { keys: ['price','pricing','cost','how much'], reply: () => `Check the <a href="#/pricing">Pricing page</a> for tiers ${rand(HYPE)}` },
-    { keys: ['template','templates','portfolio'], reply: () => `Peek here 👉 <a href="#/templates">Browse templates</a>` },
+    { keys: ['price','pricing','cost','how much'], reply: () => `Check the <a href="#/pricing" data-bot-nav="#/pricing">Pricing page</a> for tiers ${rand(HYPE)}` },
+    { keys: ['template','templates','portfolio'], reply: () => `Peek here 👉 <a href="#/templates" data-bot-nav="#/templates">Browse templates</a>` },
     { keys: ['delivery','how long','time'], reply: () => `Instant delivery after payment for most templates. Custom builds: 3–7 days.` },
     { keys: ['payment','pay','upi','razorpay'], reply: () => `We accept UPI (GPay/PhonePe/Paytm) and Razorpay for cards.` },
-    { keys: ['refund','return','cancel'], reply: () => `Refunds for genuine issues within support window. Contact us via <a href="#/contact">Contact</a>.` },
-    { keys: ['support','help','contact'], reply: () => `<a href="#/contact">Say hi via Contact</a> — we reply within 1 business day.` },
-    { keys: ['review','reviews','rating'], reply: () => `Real reviews here 👉 <a href="#/reviews">Reviews</a>` },
+    { keys: ['refund','return','cancel'], reply: () => `Refunds for genuine issues within support window. Contact us via <a href="#/contact" data-bot-nav="#/contact">Contact</a>.` },
+    { keys: ['support','help','contact'], reply: () => `<a href="#/contact" data-bot-nav="#/contact">Say hi via Contact</a> — we reply within 1 business day.` },
+    { keys: ['review','reviews','rating'], reply: () => `Real reviews here 👉 <a href="#/reviews" data-bot-nav="#/reviews">Reviews</a>` },
     { keys: ['thank','thanks','ty'], reply: () => `Awww 🥹 Go build something dangerously beautiful ${rand(HYPE)}` },
     { keys: ['bye','goodbye','see you'], reply: () => `Peace out ✌️ ${rand(HYPE)}` }
   ];
@@ -2534,15 +2550,26 @@ const Contact = (() => {
     setTimeout(() => { typing.remove(); addBotMsg(findReply(userText)); }, 600);
   };
 
-  form.addEventListener('submit', (e) => {
-    e.preventDefault();
-    const text = input.value.trim();
-    if (!text) return;
+  // ---- SEND (form submit + explicit send-button click as fallback) ----
+  const sendCurrent = () => {
+    const text = (input.value || '').trim();
+    if (!text) { input.focus(); return; }
     addUserMsg(text);
     input.value = '';
     respond(text);
+  };
+  form.addEventListener('submit', (e) => { e.preventDefault(); e.stopPropagation(); sendCurrent(); });
+  if (sendBtn) {
+    sendBtn.setAttribute('type', 'submit');
+    // Belt-and-suspenders: some browsers swallow submit if pointer-events flicker
+    sendBtn.addEventListener('click', (e) => { e.preventDefault(); sendCurrent(); });
+  }
+  // Enter key inside input triggers send even if form submit is somehow blocked
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCurrent(); }
   });
 
+  // ---- QUICK CHIPS (rendered once, then delegated for reliability) ----
   const QUICK = [
     { label: '💰 Pricing', q: 'pricing' },
     { label: '🎨 Templates', q: 'templates' },
@@ -2550,37 +2577,139 @@ const Contact = (() => {
     { label: '↩️ Refunds', q: 'refund' },
     { label: '📞 Contact', q: 'contact' }
   ];
+  // Wipe once in case of hot-reload double-render
+  quick.innerHTML = '';
   QUICK.forEach(({ label, q }) => {
     const b = document.createElement('button');
     b.type = 'button';
     b.className = 'dude-bot-chip';
+    b.dataset.botQuick = q;
+    b.dataset.botLabel = label;
     b.textContent = label;
-    b.addEventListener('click', () => { addUserMsg(label); respond(q); });
     quick.appendChild(b);
   });
+  // Delegated handler — survives DOM re-renders and pointer-events flicker
+  quick.addEventListener('click', (e) => {
+    const chip = e.target.closest('.dude-bot-chip');
+    if (!chip || !quick.contains(chip)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const q = chip.dataset.botQuick;
+    const label = chip.dataset.botLabel || chip.textContent;
+    if (!q) return;
+    addUserMsg(label);
+    respond(q);
+  });
 
+  // ---- IN-BUBBLE ANCHOR LINKS: close panel then navigate ----
+  msgs.addEventListener('click', (e) => {
+    const a = e.target.closest('a[data-bot-nav], .dude-bot-bubble-bot a');
+    if (!a) return;
+    const href = a.getAttribute('data-bot-nav') || a.getAttribute('href') || '';
+    if (!href) return;
+    e.preventDefault();
+    // On small screens, close panel first so the destination is visible
+    const isMobile = window.matchMedia('(max-width: 640px)').matches;
+    if (isMobile) closeBot();
+    // Fire navigation shortly after so the close animation can start
+    setTimeout(() => {
+      if (href.startsWith('#')) {
+        // Force hashchange even if same hash was set previously
+        if (location.hash === href) { location.hash = ''; }
+        location.hash = href.slice(1);
+      } else {
+        window.location.href = href;
+      }
+    }, isMobile ? 220 : 0);
+  });
+
+  // ---- OPEN / CLOSE state machine (transition-safe) ----
+  const MQ_MOBILE = window.matchMedia('(max-width: 640px)');
   let opened = false;
+  let animating = false; // true during open/close transition
+  let isOpen   = false;
+
+  const applyFullscreenBodyLock = (on) => {
+    // True fullscreen on small screens = lock body scroll + tag body class
+    if (on && MQ_MOBILE.matches) {
+      document.body.classList.add('dude-bot-fullscreen-open');
+      // Save current scroll so we can restore it
+      document.body.dataset.dudebotScrollY = String(window.scrollY || 0);
+    } else {
+      const y = parseInt(document.body.dataset.dudebotScrollY || '0', 10);
+      document.body.classList.remove('dude-bot-fullscreen-open');
+      if (!on && y) { window.scrollTo(0, y); delete document.body.dataset.dudebotScrollY; }
+    }
+  };
+
   const openBot = () => {
+    if (isOpen || animating) return;
+    animating = true;
     panel.hidden = false;
+    // Force reflow so the transition plays
+    void panel.offsetWidth;
     requestAnimationFrame(() => panel.classList.add('is-open'));
     fab.setAttribute('aria-expanded', 'true');
     fab.classList.add('is-open');
     if (badge) badge.hidden = true;
-    setTimeout(() => input.focus(), 350);
+    applyFullscreenBodyLock(true);
+    setTimeout(() => { animating = false; isOpen = true; try { input.focus({ preventScroll: true }); } catch(_){ input.focus(); } }, 360);
     if (!opened) {
       opened = true;
       setTimeout(() => addBotMsg(`Yo 👋 Welcome to <b>DUDE</b>! Ask me anything ✨`), 250);
     }
   };
   const closeBot = () => {
+    if (!isOpen && !panel.classList.contains('is-open')) {
+      // Ensure hidden state is truthy even if called defensively
+      panel.hidden = true;
+      fab.classList.remove('is-open');
+      fab.setAttribute('aria-expanded', 'false');
+      applyFullscreenBodyLock(false);
+      return;
+    }
+    animating = true;
     panel.classList.remove('is-open');
     fab.classList.remove('is-open');
     fab.setAttribute('aria-expanded', 'false');
-    setTimeout(() => { panel.hidden = true; }, 260);
+    setTimeout(() => { panel.hidden = true; animating = false; isOpen = false; applyFullscreenBodyLock(false); }, 280);
   };
-  fab.addEventListener('click', () => panel.hidden ? openBot() : closeBot());
-  closeBtn.addEventListener('click', closeBot);
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) closeBot(); });
+
+  // FAB toggle uses isOpen (not panel.hidden) → no race during anim window
+  const toggleBot = (e) => {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    if (animating) return; // ignore taps mid-transition
+    if (isOpen) closeBot(); else openBot();
+  };
+  fab.addEventListener('click', toggleBot);
+
+  // Close button — both click and pointerdown for touch reliability
+  const doClose = (e) => { if (e) { e.preventDefault(); e.stopPropagation(); } closeBot(); };
+  if (closeBtn) {
+    closeBtn.setAttribute('type', 'button');
+    closeBtn.addEventListener('click', doClose);
+  }
+
+  // Delegated close inside panel (covers dynamically inserted close-icons too)
+  panel.addEventListener('click', (e) => {
+    const c = e.target.closest('#dude-bot-close, [data-bot-close]');
+    if (c) doClose(e);
+  });
+
+  // Escape closes
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && isOpen) closeBot(); });
+
+  // If viewport crosses the mobile breakpoint while open, keep body-lock state correct
+  const onMqChange = () => {
+    if (!isOpen) return;
+    if (MQ_MOBILE.matches) applyFullscreenBodyLock(true);
+    else applyFullscreenBodyLock(false);
+  };
+  if (MQ_MOBILE.addEventListener) MQ_MOBILE.addEventListener('change', onMqChange);
+  else if (MQ_MOBILE.addListener) MQ_MOBILE.addListener(onMqChange);
+
+  // Safety: if browser 'back' is used on mobile while fullscreen open, restore body
+  window.addEventListener('pagehide', () => { applyFullscreenBodyLock(false); });
 })();
 
 (function stampLooseButtons(){
@@ -2589,5 +2718,26 @@ const Contact = (() => {
       if (b.closest('form')) return;
       b.setAttribute('type', 'button');
     });
+  } catch (_) {}
+})();
+
+/* ============================================================
+   Post-init sanity re-stamp for chatbot chips (runs after any
+   late DOM manipulation, e.g. if another script clones/rewrites nodes)
+   ============================================================ */
+(function stampChatbotChips(){
+  try {
+    const quick = document.getElementById('dude-bot-quick');
+    if (!quick) return;
+    const restamp = () => {
+      quick.querySelectorAll('button.dude-bot-chip').forEach(b => {
+        if (b.getAttribute('type') !== 'button') b.setAttribute('type','button');
+        b.style.pointerEvents = 'auto';
+      });
+    };
+    restamp();
+    // Watch for any late re-renders
+    const mo = new MutationObserver(restamp);
+    mo.observe(quick, { childList: true, subtree: true });
   } catch (_) {}
 })();
