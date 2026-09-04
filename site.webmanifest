@@ -1,0 +1,22 @@
+{
+  "name": "DUDE — Portfolio Websites",
+  "short_name": "DUDE",
+  "description": "Handcrafted, developer-grade portfolio templates you can own, customize and deploy — for students, freelancers and indie devs.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0A0E1A",
+  "theme_color": "#0A0E1A",
+  "categories": ["shopping", "developer-tools", "productivity"],
+  "lang": "en",
+  "dir": "ltr",
+  "icons": [
+    { "src": "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='2' y='4' width='28' height='24' rx='6' fill='%232F5CFF'/%3E%3C/svg%3E", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Browse templates", "url": "/#/templates" },
+    { "name": "Pricing", "url": "/#/pricing" },
+    { "name": "My orders", "url": "/#/orders" }
+  ]
+}
